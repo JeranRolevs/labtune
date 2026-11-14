@@ -9,11 +9,11 @@ from .http import ProviderError, validate_base_url, validate_endpoint
 def generation_settings(value):
     required = {"base_url", "model", "api_key_env", "env_file", "timeout_seconds",
                 "max_output_tokens", "max_parallel_requests"}
-    optional = {"adapter", "endpoint", "models_endpoint", "max_output_field", "request_options"}
+    optional = {"adapter", "endpoint", "models_endpoint", "max_output_field", "request_options", "stream", "request_gap_seconds"}
     if not isinstance(value, dict) or not required <= set(value) or set(value) - required - optional:
         raise ProviderError("configuration", "Provider settings have missing or unknown fields; see docs/PROVIDERS.md.")
     result = {"adapter": "chat_completions", "endpoint": "/chat/completions", "models_endpoint": None,
-              "max_output_field": "max_tokens", **value}
+              "max_output_field": "max_tokens", "stream": False, "request_gap_seconds": 0, **value}
     if result["adapter"] != "chat_completions":
         raise ProviderError("configuration", "Generation currently requires the chat_completions protocol.")
     for name in ("model", "env_file"):
@@ -34,6 +34,11 @@ def generation_settings(value):
             raise ProviderError("configuration", "Provider count limits must be positive integers.")
     if result["max_output_field"] not in {"max_tokens", "max_completion_tokens"}:
         raise ProviderError("configuration", "Unsupported output-limit field.")
+    if not isinstance(result["stream"], bool):
+        raise ProviderError("configuration", "Provider stream setting must be boolean.")
+    gap = result["request_gap_seconds"]
+    if isinstance(gap, bool) or not isinstance(gap, (int, float)) or not math.isfinite(gap) or gap < 0:
+        raise ProviderError("configuration", "Request gap must be finite and nonnegative.")
     result["request_options"] = validate_request_options(result.get("request_options"))
     return result
 

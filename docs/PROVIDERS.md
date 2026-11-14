@@ -48,6 +48,25 @@ The default is max_tokens. Request options cannot override the model, messages, 
 output bound. Finite JSON options such as temperature and nested generation settings are
 sent only when explicitly supplied; support for them depends on the selected service.
 
+Streaming is an explicit generation-provider choice: add `stream: true` to the
+provider mapping for an OpenAI-format server-sent event response. The default is
+`false`; `request_options` still cannot override it. Streaming preserves the same
+request/time budget and never enables retries or a model fallback. The adapter
+requires a completion reason and the stream's DONE terminator, keeps reasoning
+separate from final answer text, and retains authoritative usage when supplied.
+A `length` finish is incomplete even if reasoning consumed the entire allowance.
+Missing streaming usage remains missing, not zero cost. Stream progress metadata
+is observable without interpreting partial fragments as completed findings.
+
+The experimental `request_gap_seconds` provider option defaults to zero. A user
+may choose a finite nonnegative gap after the previous request finishes, inside
+the existing concurrency gate and before reserving the next request. Waiting is
+part of the shared time allowance; it does not grant retries or bypass quotas.
+On an HTTP failure, only a bounded structured provider error code and a numeric
+Retry-After value, when available, are retained as metadata; raw error messages
+and response headers are not journaled by this change. Provider-specific JSON
+output modes can be explicitly selected through validated `request_options`.
+
 Model listing is optional. If your service exposes a compatible data / id listing, set
 models_endpoint, for example /models, to have an explicit live check use it. Otherwise the
 live check directly probes the chosen generation model without assuming a listing API exists.

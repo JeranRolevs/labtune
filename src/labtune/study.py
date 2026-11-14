@@ -184,7 +184,7 @@ def client_for(config, key, **kwargs):
     return ChatCompletionsClient(key, model=p["model"], base_url=p["base_url"], endpoint=p["endpoint"],
         models_endpoint=p["models_endpoint"], timeout=p["timeout_seconds"], max_tokens=p["max_output_tokens"],
         max_parallel=kwargs.pop("max_parallel", p["max_parallel_requests"]),
-        max_output_field=p["max_output_field"], request_options=p["request_options"], **kwargs)
+        max_output_field=p["max_output_field"], request_options=p["request_options"], stream=p["stream"], request_gap_seconds=p["request_gap_seconds"], **kwargs)
 
 
 def prepare(project, workspace):
@@ -391,7 +391,9 @@ initial tool, so do not claim those capabilities solved.
             usage = value["response"].get("usage") or {}
             incoming = usage.get("prompt_tokens", usage.get("input_tokens"))
             outgoing = usage.get("completion_tokens", usage.get("output_tokens"))
-            if isinstance(incoming, int) and not isinstance(incoming, bool) and incoming >= 0:
+            incoming_valid = isinstance(incoming, int) and not isinstance(incoming, bool) and incoming >= 0
+            outgoing_valid = isinstance(outgoing, int) and not isinstance(outgoing, bool) and outgoing >= 0
+            if incoming_valid:
                 if specialist:
                     identity = provider
                     row = self.decision_usage.setdefault(identity, {"requests": 0, "input_tokens": 0, "output_tokens": 0})
@@ -399,15 +401,17 @@ initial tool, so do not claim those capabilities solved.
                     self.usage["decision_input_tokens"] += incoming
                 else:
                     self.usage["chat_input_tokens"] += incoming
-            else:
-                self.usage["missing_usage_receipts"] += 1
-            if isinstance(outgoing, int) and not isinstance(outgoing, bool) and outgoing >= 0:
+            if outgoing_valid:
                 if specialist:
                     self.usage["decision_output_tokens"] += outgoing
                     identity = provider
                     self.decision_usage.setdefault(identity, {"requests": 0, "input_tokens": 0, "output_tokens": 0})["output_tokens"] += outgoing
                 else:
                     self.usage["chat_output_tokens"] += outgoing
+            if not (incoming_valid and outgoing_valid):
+                # Count one incomplete receipt per response, preserving whichever
+                # authoritative side is known without interpreting unknown as free.
+                self.usage["missing_usage_receipts"] += 1
         progress = ({"sequence": self.progress["current_sequence"], "pass": self.progress["current_pass"]}
                     if self.progress is not None else {})
         event = self.clean({"seq": self.events, "time": timestamp(), "actor": ACTOR.get(), "node": NODE.get(), **progress, **value})
@@ -753,11 +757,17 @@ initial tool, so do not claim those capabilities solved.
                 results=await asyncio.gather(*[
                     self.run_node_episode(node,actor)
                     for node,actor in batch],return_exceptions=True)
+                failures = []
                 for result in results:
-                    if isinstance(result,BaseException):
-                        raise result
-                    if "output" in result:
+                    if isinstance(result, BaseException):
+                        failures.append(result)
+                    elif "output" in result:
                         wave_outputs.append(result)
+                if failures:
+                    # Preserve successful peers from this dependency wave before
+                    # surfacing a sibling failure. This is not automatic resume.
+                    self.outputs.extend(wave_outputs)
+                    raise failures[0]
             # A dependency wave sees one prior snapshot, regardless of finish order or resource width.
             self.outputs.extend(wave_outputs)
             for node in ready:

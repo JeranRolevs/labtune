@@ -151,6 +151,37 @@ class StudyTests(unittest.TestCase):
         self.assertEqual(calls, ["/models", "/chat/completions", "/assess"])
         self.assertFalse(result["research_started"])
 
+    def test_complete_native_workflow_uses_streamed_http_offline(self):
+        import io
+        config = fixture_config()
+        config["provider"]["stream"] = True
+        (self.root / "study.yaml").write_text(json.dumps(config))
+        (self.root / "mission/problem.md").write_text("Offline streamed workflow fixture.")
+        action = {"action": "final", "summary": "Unverified", "findings": [],
+                  "wisdom": [], "candidate_output": "Not measured."}
+        chunks = [{"choices": [{"index": 0, "delta": {"content": json.dumps(action)},
+                                "finish_reason": "stop"}]},
+                  {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 7}}]
+        data = ("".join("data: " + json.dumps(x) + "\n\n" for x in chunks) + "data: [DONE]\n\n").encode()
+        class Response(io.BytesIO):
+            headers = {"Content-Type": "text/event-stream"}
+        requests = []
+        class Opener:
+            def open(self, request, timeout):
+                requests.append(json.loads(request.data))
+                return Response(data)
+        with patch.dict(os.environ, {"LABTUNE_API_KEY": FAKE_KEY}), patch(
+                "labtune.providers.http.urllib.request.build_opener", return_value=Opener()):
+            result = asyncio.run(run_variant(PROJECT, self.root, "a-none"))
+        self.assertEqual(result["status"], "completed_text_workflow")
+        self.assertEqual(result["verification_status"], "not_evaluated")
+        self.assertTrue(all(x["stream"] for x in requests))
+        self.assertEqual(result["provider_post_requests"], len(requests))
+        self.assertEqual(result["usage"]["chat_output_tokens"], 7 * len(requests))
+        journal = (self.root / "trials" / result["trial_id"] / "events.jsonl").read_text()
+        self.assertIn("provider_stream_progress", journal)
+        self.assertNotIn(FAKE_KEY, journal)
+
     def test_real_workflow_structure_runs_with_fake_responses_and_never_verifies_proposals(self):
         (self.root / "mission/problem.md").write_text("Offline fixture: propose a reversible improvement.")
         def transport(client, method, path, body):

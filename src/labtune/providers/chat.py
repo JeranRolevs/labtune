@@ -37,7 +37,7 @@ def validate_request_options(value):
 class ChatCompletionsClient(JSONClient):
     def __init__(self, api_key, *, model, base_url, endpoint="/chat/completions",
                  models_endpoint=None, provider_id="generation", timeout=90, max_tokens=1024,
-                 max_output_field="max_tokens", max_parallel=3, request_options=None, **kwargs):
+                 max_output_field="max_tokens", max_parallel=3, request_options=None, stream=False, **kwargs):
         super().__init__(api_key, base_url=base_url, provider_id=provider_id, timeout=timeout,
                          max_parallel=max_parallel, **kwargs)
         if not isinstance(model, str) or not model.strip():
@@ -46,6 +46,9 @@ class ChatCompletionsClient(JSONClient):
             raise ProviderError("configuration", "Output token limit must be a positive integer.")
         if max_output_field not in {"max_tokens", "max_completion_tokens"}:
             raise ProviderError("configuration", "Unsupported output-limit field.")
+        if not isinstance(stream, bool):
+            raise ProviderError("configuration", "stream must be boolean.")
+        self.stream = stream
         self.model, self.endpoint = model, validate_endpoint(endpoint)
         self.models_endpoint = validate_endpoint(models_endpoint) if models_endpoint is not None else None
         self.max_tokens, self.max_output_field = max_tokens, max_output_field
@@ -62,7 +65,7 @@ class ChatCompletionsClient(JSONClient):
 
     async def generate(self, messages, *, budget_ref):
         body = {**self.request_options, "model": self.model, "messages": list(messages),
-                self.max_output_field: self.max_tokens, "stream": False}
+                self.max_output_field: self.max_tokens, "stream": self.stream}
         result = await self.request("POST", self.endpoint, body)
         choices = result.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
